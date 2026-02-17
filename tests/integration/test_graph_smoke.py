@@ -78,7 +78,7 @@ async def test_graph_runs_to_end_when_goal_passes(passing_project: Path, mock_ll
     }
 
     with patch("retrai.agent.nodes.plan.get_llm", return_value=mock_llm):
-        final = await graph.ainvoke(initial_state, config=run_config)
+        final = await graph.ainvoke(initial_state, config=run_config)  # type: ignore[arg-type]
 
     await bus.close()
     assert final["goal_achieved"] is True
@@ -113,7 +113,7 @@ async def test_graph_stops_at_max_iterations(failing_project: Path, mock_llm: Ma
     }
 
     with patch("retrai.agent.nodes.plan.get_llm", return_value=mock_llm):
-        final = await graph.ainvoke(initial_state, config=run_config)
+        final = await graph.ainvoke(initial_state, config=run_config)  # type: ignore[arg-type]
 
     await bus.close()
     assert final["goal_achieved"] is False
@@ -157,7 +157,7 @@ async def test_graph_emits_events(passing_project: Path, mock_llm: MagicMock):
 
     consumer = asyncio.create_task(consume())
     with patch("retrai.agent.nodes.plan.get_llm", return_value=mock_llm):
-        await graph.ainvoke(initial_state, config=run_config)
+        await graph.ainvoke(initial_state, config=run_config)  # type: ignore[arg-type]
     await bus.close()
     await consumer
 

@@ -21,7 +21,13 @@ app = typer.Typer(
 
 @app.command()
 def run(
-    goal: str = typer.Argument(..., help="Goal to achieve (e.g. 'pytest')"),
+    goal: str | None = typer.Argument(
+        None,
+        help=(
+            "Goal to achieve (e.g. 'pytest', 'bun-test', 'cargo-test'). "
+            "Omit to auto-detect from project files."
+        ),
+    ),
     cwd: str = typer.Option(".", "--cwd", "-C", help="Project directory (default: current dir)"),
     model: str = typer.Option(
         "claude-sonnet-4-6", "--model", "-m", help="LLM model name (LiteLLM format)"
@@ -29,9 +35,33 @@ def run(
     max_iter: int = typer.Option(20, "--max-iter", "-n", help="Maximum agent iterations"),
     hitl: bool = typer.Option(False, "--hitl", help="Enable human-in-the-loop checkpoints"),
 ) -> None:
-    """Run an agent goal loop in the terminal."""
+    """Run an agent goal loop in the terminal.
+
+    If no goal is given, retrAI scans the project and auto-detects the right one.
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     from retrai.config import RunConfig
+    from retrai.goals.detector import detect_goal
     from retrai.goals.registry import list_goals
+
+    resolved_cwd = str(Path(cwd).resolve())
+
+    # Auto-detect goal if not provided
+    if goal is None:
+        detected = detect_goal(resolved_cwd)
+        if detected is None:
+            available = ", ".join(list_goals())
+            console.print(
+                "[yellow]Could not auto-detect a test framework in this project.[/yellow]\n"
+                f"Available goals: [bold]{available}[/bold]\n"
+                "Run [bold]retrai run <goal>[/bold] or [bold]retrai init[/bold] to configure."
+            )
+            raise typer.Exit(code=1)
+        console.print(f"[dim]Auto-detected goal:[/dim] [bold cyan]{detected}[/bold cyan]")
+        goal = detected
 
     # Validate goal
     available = list_goals()
@@ -39,7 +69,6 @@ def run(
         console.print(f"[red]Unknown goal: '{goal}'. Available: {', '.join(available)}[/red]")
         raise typer.Exit(code=1)
 
-    resolved_cwd = str(Path(cwd).resolve())
     cfg = RunConfig(
         goal=goal,
         cwd=resolved_cwd,
@@ -209,6 +238,10 @@ def serve(
     reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (dev mode)"),
 ) -> None:
     """Start the retrAI web dashboard (FastAPI + Vue)."""
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     import uvicorn
 
     console.print(
@@ -234,6 +267,10 @@ def tui(
     max_iter: int = typer.Option(20, "--max-iter", "-n", help="Max iterations"),
 ) -> None:
     """Launch the interactive Textual TUI."""
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
     from retrai.config import RunConfig
     from retrai.tui.app import RetrAITUI
 
@@ -241,3 +278,115 @@ def tui(
     cfg = RunConfig(goal=goal, cwd=resolved_cwd, model_name=model, max_iterations=max_iter)
     tui_app = RetrAITUI(cfg=cfg)
     tui_app.run()
+
+
+@app.command()
+def init(
+    cwd: str = typer.Option(".", "--cwd", "-C", help="Project directory"),
+    goal: str | None = typer.Option(
+        None, "--goal", "-g", help="Goal to use (auto-detected if omitted)"
+    ),
+    model: str = typer.Option("claude-sonnet-4-6", "--model", "-m", help="LLM model name"),
+    max_iter: int = typer.Option(20, "--max-iter", "-n", help="Max agent iterations"),
+    hitl: bool = typer.Option(False, "--hitl", help="Enable human-in-the-loop checkpoints"),
+) -> None:
+    """Scaffold a .retrai.yml config file in the project directory."""
+    import yaml
+
+    from retrai.goals.detector import detect_goal
+    from retrai.goals.registry import list_goals
+
+    resolved_cwd = str(Path(cwd).resolve())
+
+    if goal is None:
+        detected = detect_goal(resolved_cwd)
+        if detected:
+            console.print(f"[dim]Auto-detected:[/dim] [bold cyan]{detected}[/bold cyan]")
+            goal = detected
+        else:
+            available = ", ".join(list_goals())
+            console.print(
+                "[yellow]Could not auto-detect a test framework.[/yellow]\n"
+                f"Available goals: [bold]{available}[/bold]\n"
+                "Pass [bold]--goal <name>[/bold] to configure manually."
+            )
+            raise typer.Exit(code=1)
+
+    config: dict = {
+        "goal": goal,
+        "model": model,
+        "max_iterations": max_iter,
+        "hitl_enabled": hitl,
+    }
+
+    config_path = Path(resolved_cwd) / ".retrai.yml"
+    config_path.write_text(yaml.dump(config, default_flow_style=False, sort_keys=False))
+
+    console.print(
+        Panel(
+            Text.from_markup(
+                f"[bold green]✓ Created[/bold green] [bold]{config_path}[/bold]\n\n"
+                f"  goal:           [cyan]{goal}[/cyan]\n"
+                f"  model:          [cyan]{model}[/cyan]\n"
+                f"  max_iterations: [cyan]{max_iter}[/cyan]\n"
+                f"  hitl_enabled:   [cyan]{hitl}[/cyan]\n\n"
+                "Run [bold]retrai run[/bold] to start the agent."
+            ),
+            border_style="green",
+            title="retrAI init",
+        )
+    )
+
+
+@app.command(name="generate-eval")
+def generate_eval(
+    description: str = typer.Argument(..., help="Natural language description of what to achieve"),
+    cwd: str = typer.Option(".", "--cwd", "-C", help="Project directory"),
+    model: str = typer.Option("claude-sonnet-4-6", "--model", "-m", help="LLM model name"),
+) -> None:
+    """Generate an AI eval harness from a natural-language description.
+
+    Example:
+        retrai generate-eval "make the sort function run in O(n log n) time"
+
+    After running this, use:
+        retrai run ai-eval
+    """
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    from retrai.goals.planner import generate_eval_harness
+
+    resolved_cwd = str(Path(cwd).resolve())
+
+    console.print(
+        Panel(
+            f"[bold cyan]Generating eval harness…[/bold cyan]\n[dim]{description}[/dim]",
+            border_style="cyan",
+        )
+    )
+
+    harness_path = asyncio.run(
+        generate_eval_harness(
+            description=description,
+            cwd=resolved_cwd,
+            model_name=model,
+        )
+    )
+
+    harness_content = harness_path.read_text()
+    console.print(
+        Panel(
+            harness_content,
+            title=(
+                f"[bold green]✓ Harness saved to "
+                f"{harness_path.relative_to(resolved_cwd)}[/bold green]"
+            ),
+            border_style="green",
+        )
+    )
+    console.print(
+        "\n[bold]Next step:[/bold] run [bold cyan]retrai run ai-eval[/bold cyan]"
+        f" [dim]--cwd {resolved_cwd}[/dim]"
+    )

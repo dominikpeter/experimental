@@ -84,8 +84,7 @@ class PerfCheckGoal(GoalBase):
                 return GoalResult(
                     achieved=False,
                     reason=(
-                        f"Too slow: {elapsed:.3f}s (limit: {max_seconds}s,"
-                        f" avg so far: {avg:.3f}s)"
+                        f"Too slow: {elapsed:.3f}s (limit: {max_seconds}s, avg so far: {avg:.3f}s)"
                     ),
                     details={
                         "command": command,
@@ -99,8 +98,7 @@ class PerfCheckGoal(GoalBase):
         return GoalResult(
             achieved=True,
             reason=(
-                f"Passed {required_passes}× consecutive in avg {avg:.3f}s"
-                f" (limit: {max_seconds}s)"
+                f"Passed {required_passes}× consecutive in avg {avg:.3f}s (limit: {max_seconds}s)"
             ),
             details={"command": command, "times": times, "avg": avg},
         )

@@ -109,6 +109,9 @@ async def plan_node(state: AgentState, config: RunnableConfig) -> dict:
         system_content = _build_system_prompt(goal, state)
         messages = [SystemMessage(content=system_content)]
 
+    # Trim to avoid unbounded context growth
+    messages = _trim_messages(messages)
+
     # Bind tools to the model
     llm_with_tools = llm.bind_tools(TOOL_DEFINITIONS)  # type: ignore[attr-defined]
 
@@ -131,6 +134,16 @@ async def plan_node(state: AgentState, config: RunnableConfig) -> dict:
         "pending_tool_calls": pending,
         "tool_results": [],
     }
+
+
+def _trim_messages(messages: list, max_keep: int = 40) -> list:
+    """Keep the first (system) message and the most recent messages."""
+    if len(messages) <= max_keep:
+        return messages
+    # Always keep the first system message
+    first = messages[0:1]
+    tail = messages[-(max_keep - 1) :]
+    return first + tail
 
 
 def _build_system_prompt(goal: Any, state: AgentState) -> str:

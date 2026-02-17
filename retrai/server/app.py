@@ -15,6 +15,9 @@ from retrai.server.routes import runs, ws
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    from dotenv import load_dotenv
+
+    load_dotenv()
     yield
     # Shutdown: close all active run buses
     from retrai.server.run_manager import run_manager

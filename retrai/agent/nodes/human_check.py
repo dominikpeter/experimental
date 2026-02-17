@@ -51,4 +51,6 @@ async def human_check_node(state: AgentState, config: RunnableConfig) -> dict:
 
     # decision is whatever the human passed in resume()
     approved = decision in (True, "approve", "yes", "continue")
-    return {"goal_achieved": not approved if not approved else state["goal_achieved"]}
+    if not approved:
+        return {"goal_achieved": False, "goal_reason": "Aborted by user."}
+    return {}

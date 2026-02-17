@@ -24,11 +24,9 @@ def route_after_evaluate(state: AgentState) -> str:
 
 
 def route_after_human_check(state: AgentState) -> str:
-    """After human_check: if goal was set to False (abort), end; else plan."""
-    # human_check_node sets goal_achieved=True if aborted (as a signal)
-    # We check by looking at a special sentinel — if human said abort,
-    # evaluate would have set goal_achieved=False but we set a flag.
-    # Simple approach: if iteration >= max_iterations, end.
+    """After human_check: if aborted or max iterations reached, end; else plan."""
+    if not state["goal_achieved"] and state.get("goal_reason") == "Aborted by user.":
+        return "end"
     if state["iteration"] >= state["max_iterations"]:
         return "end"
     return "plan"
