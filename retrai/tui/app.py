@@ -40,14 +40,14 @@ Screen {
 #logo-container {
     width: 100%;
     height: auto;
-    align: center middle;
+    align: left middle;
     padding: 1 2;
     border-bottom: heavy #2e1065;
 }
 
 #logo-label {
     width: auto;
-    text-align: center;
+    text-align: left;
 }
 
 #layout {
@@ -138,7 +138,7 @@ def _gradient_logo() -> Text:
     for i, line in enumerate(lines):
         color = colors[min(i, len(colors) - 1)]
         text.append(line + "\n", style=f"bold {color}")
-    subtitle = Text("  self-solving AI agent loop  ", style="italic #64748b", justify="center")
+    subtitle = Text("  self-solving AI agent loop  ", style="italic #64748b", justify="left")
     text.append_text(subtitle)
     return text
 
