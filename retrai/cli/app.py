@@ -19,6 +19,173 @@ app = typer.Typer(
 )
 
 
+def _interactive_setup(cwd: str) -> dict[str, str]:
+    """Run interactive first-time setup — pick provider, model, and API key."""
+    import os
+
+    import yaml
+
+    from retrai.config import PROVIDER_MODELS
+
+    console.print(
+        Panel(
+            "[bold cyan]Welcome to retrAI![/bold cyan]\n\n"
+            "No [bold].retrai.yml[/bold] found. Let's set up your AI provider.",
+            border_style="cyan",
+        )
+    )
+
+    # 1. Pick provider
+    providers = list(PROVIDER_MODELS.keys())
+    console.print("\n[bold]Choose your AI provider:[/bold]")
+    for i, name in enumerate(providers, 1):
+        console.print(f"  [cyan]{i}[/cyan]) {name}")
+    choice = typer.prompt("\nProvider number", default="1")
+    try:
+        provider_name = providers[int(choice) - 1]
+    except (ValueError, IndexError):
+        provider_name = providers[0]
+    provider = PROVIDER_MODELS[provider_name]
+    console.print(f"\n[dim]Selected:[/dim] [bold]{provider_name}[/bold]")
+
+    # 2. Pick model
+    models = provider["models"]
+    if models:
+        console.print("\n[bold]Choose a model:[/bold]")
+        for i, m in enumerate(models, 1):
+            console.print(f"  [cyan]{i}[/cyan]) {m}")
+        console.print(f"  [cyan]{len(models) + 1}[/cyan]) Custom (enter manually)")
+        model_choice = typer.prompt("Model number", default="1")
+        try:
+            idx = int(model_choice) - 1
+            model = models[idx] if 0 <= idx < len(models) else ""
+        except (ValueError, IndexError):
+            model = models[0]
+        if not model:
+            model = typer.prompt("Enter model name (LiteLLM format)")
+    else:
+        model = typer.prompt("Enter model name (LiteLLM format)", default="gpt-4o")
+    console.print(f"[dim]Model:[/dim] [bold]{model}[/bold]")
+
+    # 3. API key
+    env_var = provider.get("env_var")
+    if env_var and not os.environ.get(env_var):
+        console.print(
+            f"\n[yellow]No {env_var} found in environment.[/yellow]"
+        )
+        api_key = typer.prompt(
+            f"Enter your API key (or leave blank to set {env_var} later)",
+            default="",
+            hide_input=True,
+        )
+        if api_key:
+            os.environ[env_var] = api_key
+    elif env_var:
+        console.print(f"\n[green]✓ {env_var} already set in environment[/green]")
+
+    # 4. Extra env vars (e.g. Azure)
+    for extra in provider.get("extra_env", []):
+        if not os.environ.get(extra):
+            val = typer.prompt(f"Enter {extra}", default="")
+            if val:
+                os.environ[extra] = val
+
+    # 5. API base for local providers
+    api_base = provider.get("api_base")
+    if api_base:
+        os.environ["OPENAI_API_BASE"] = api_base
+        console.print(f"[dim]API base:[/dim] [bold]{api_base}[/bold]")
+
+    # Save config
+    config: dict[str, str | int | bool] = {
+        "model": model,
+    }
+    config_path = Path(cwd) / ".retrai.yml"
+    config_path.write_text(yaml.dump(dict(config), default_flow_style=False, sort_keys=False))
+    console.print(
+        f"\n[bold green]✓ Saved to {config_path.name}[/bold green]\n"
+    )
+    return {"model": model}
+
+
+def _resolve_config(
+    cwd: str,
+    *,
+    goal: str | None,
+    model: str,
+    max_iter: int,
+    hitl: bool,
+    api_key: str | None,
+    api_base: str | None,
+) -> dict[str, str | int | bool]:
+    """Load config from .retrai.yml, falling back to interactive setup.
+
+    CLI flags always take priority over config file values.
+    Returns a dict with resolved goal, model, max_iterations, hitl_enabled.
+    """
+    import os
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    from retrai.config import load_config
+    from retrai.goals.detector import detect_goal
+    from retrai.goals.registry import list_goals
+
+    # Try loading config file
+    file_cfg = load_config(cwd)
+    if file_cfg is None:
+        # No config file — run interactive setup
+        setup_result = _interactive_setup(cwd)
+        file_cfg = setup_result
+
+    # Merge: CLI args > config file > defaults
+    resolved_model = model if model != "claude-sonnet-4-6" else file_cfg.get("model", model)
+    resolved_max_iter = (
+        max_iter if max_iter != 20
+        else int(file_cfg.get("max_iterations", max_iter))
+    )
+    resolved_hitl = hitl or bool(file_cfg.get("hitl_enabled", False))
+
+    # Resolve goal: CLI arg > config file > auto-detect
+    if goal is None:
+        goal = file_cfg.get("goal") if isinstance(file_cfg.get("goal"), str) else None
+    if goal is None:
+        detected = detect_goal(cwd)
+        if detected is None:
+            available = ", ".join(list_goals())
+            console.print(
+                "[yellow]Could not auto-detect a test framework.[/yellow]\n"
+                f"Available goals: [bold]{available}[/bold]\n"
+                "Pass a goal argument or run [bold]retrai init[/bold]."
+            )
+            raise typer.Exit(code=1)
+        console.print(f"[dim]Auto-detected goal:[/dim] [bold cyan]{detected}[/bold cyan]")
+        goal = detected
+
+    # Validate goal
+    available_goals = list_goals()
+    if goal not in available_goals:
+        console.print(f"[red]Unknown goal: '{goal}'. Available: {', '.join(available_goals)}[/red]")
+        raise typer.Exit(code=1)
+
+    # Apply auth overrides
+    if api_key:
+        for env_var in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "AZURE_API_KEY"]:
+            if not os.environ.get(env_var):
+                os.environ[env_var] = api_key
+    if api_base:
+        os.environ["OPENAI_API_BASE"] = api_base
+
+    return {
+        "goal": goal,
+        "model": str(resolved_model),
+        "max_iterations": resolved_max_iter,
+        "hitl_enabled": resolved_hitl,
+    }
+
+
 @app.command()
 def run(
     goal: str | None = typer.Argument(
@@ -45,65 +212,33 @@ def run(
 
     If no goal is given, retrAI scans the project and auto-detects the right one.
     """
-    import os
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
     from retrai.config import RunConfig
-    from retrai.goals.detector import detect_goal
-    from retrai.goals.registry import list_goals
 
     resolved_cwd = str(Path(cwd).resolve())
-
-    # Auto-detect goal if not provided
-    if goal is None:
-        detected = detect_goal(resolved_cwd)
-        if detected is None:
-            available = ", ".join(list_goals())
-            console.print(
-                "[yellow]Could not auto-detect a test framework in this project.[/yellow]\n"
-                f"Available goals: [bold]{available}[/bold]\n"
-                "Run [bold]retrai run <goal>[/bold] or [bold]retrai init[/bold] to configure."
-            )
-            raise typer.Exit(code=1)
-        console.print(f"[dim]Auto-detected goal:[/dim] [bold cyan]{detected}[/bold cyan]")
-        goal = detected
-
-    # Validate goal
-    available = list_goals()
-    if goal not in available:
-        console.print(f"[red]Unknown goal: '{goal}'. Available: {', '.join(available)}[/red]")
-        raise typer.Exit(code=1)
-
-    # Apply auth overrides
-    if api_key:
-        for env_var in [
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GEMINI_API_KEY",
-            "AZURE_API_KEY",
-        ]:
-            if not os.environ.get(env_var):
-                os.environ[env_var] = api_key
-    if api_base:
-        os.environ["OPENAI_API_BASE"] = api_base
+    resolved = _resolve_config(
+        resolved_cwd,
+        goal=goal,
+        model=model,
+        max_iter=max_iter,
+        hitl=hitl,
+        api_key=api_key,
+        api_base=api_base,
+    )
 
     cfg = RunConfig(
-        goal=goal,
+        goal=str(resolved["goal"]),
         cwd=resolved_cwd,
-        model_name=model,
-        max_iterations=max_iter,
-        hitl_enabled=hitl,
+        model_name=str(resolved["model"]),
+        max_iterations=int(resolved["max_iterations"]),
+        hitl_enabled=bool(resolved["hitl_enabled"]),
     )
 
     console.print(
         Panel(
             Text.from_markup(
-                f"[bold cyan]retrAI[/bold cyan]  [dim]—[/dim]  goal=[bold]{goal}[/bold]  "
-                f"model=[bold]{model}[/bold]  max-iter=[bold]{max_iter}[/bold]  "
-                f"hitl=[bold]{'on' if hitl else 'off'}[/bold]\n"
+                f"[bold cyan]retrAI[/bold cyan]  [dim]—[/dim]  goal=[bold]{cfg.goal}[/bold]  "
+                f"model=[bold]{cfg.model_name}[/bold]  max-iter=[bold]{cfg.max_iterations}[/bold]  "
+                f"hitl=[bold]{'on' if cfg.hitl_enabled else 'off'}[/bold]\n"
                 f"[dim]cwd: {resolved_cwd}[/dim]"
             ),
             border_style="cyan",
@@ -304,59 +439,26 @@ def tui(
 
     If no goal is given, retrAI scans the project and auto-detects the right one.
     """
-    import os
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
     from retrai.config import RunConfig
-    from retrai.goals.detector import detect_goal
-    from retrai.goals.registry import list_goals
     from retrai.tui.app import RetrAITUI
 
     resolved_cwd = str(Path(cwd).resolve())
-
-    # Auto-detect goal if not provided
-    if goal is None:
-        detected = detect_goal(resolved_cwd)
-        if detected is None:
-            available = ", ".join(list_goals())
-            console.print(
-                "[yellow]Could not auto-detect a test framework in this project.[/yellow]\n"
-                f"Available goals: [bold]{available}[/bold]\n"
-                "Run [bold]retrai tui <goal>[/bold] or [bold]retrai init[/bold] to configure."
-            )
-            raise typer.Exit(code=1)
-        console.print(f"[dim]Auto-detected goal:[/dim] [bold cyan]{detected}[/bold cyan]")
-        goal = detected
-
-    # Validate goal
-    available = list_goals()
-    if goal not in available:
-        console.print(f"[red]Unknown goal: '{goal}'. Available: {', '.join(available)}[/red]")
-        raise typer.Exit(code=1)
-
-    # Apply auth overrides
-    if api_key:
-        # LiteLLM picks up provider-specific keys, but we also set the generic ones
-        for env_var in [
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "GEMINI_API_KEY",
-            "AZURE_API_KEY",
-        ]:
-            if not os.environ.get(env_var):
-                os.environ[env_var] = api_key
-    if api_base:
-        os.environ["OPENAI_API_BASE"] = api_base
+    resolved = _resolve_config(
+        resolved_cwd,
+        goal=goal,
+        model=model,
+        max_iter=max_iter,
+        hitl=hitl,
+        api_key=api_key,
+        api_base=api_base,
+    )
 
     cfg = RunConfig(
-        goal=goal,
+        goal=str(resolved["goal"]),
         cwd=resolved_cwd,
-        model_name=model,
-        max_iterations=max_iter,
-        hitl_enabled=hitl,
+        model_name=str(resolved["model"]),
+        max_iterations=int(resolved["max_iterations"]),
+        hitl_enabled=bool(resolved["hitl_enabled"]),
     )
     tui_app = RetrAITUI(cfg=cfg)
     tui_app.run()
