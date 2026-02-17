@@ -153,10 +153,12 @@ class StatusPanel(Static):
         self._max = cfg.max_iterations
 
     def compose(self) -> ComposeResult:
+        from rich.markup import escape
+
         yield Label("retrAI", id="status-title")
-        yield Label(f"[dim]Goal:[/dim]  [{self.cfg.goal}]", classes="info-row")
-        yield Label(f"[dim]Model:[/dim] [{self.cfg.model_name[:22]}]", classes="info-row")
-        yield Label(f"[dim]CWD:[/dim]   [{self.cfg.cwd[:22]}]", classes="info-row")
+        yield Label(f"[dim]Goal:[/dim]  {escape(self.cfg.goal)}", classes="info-row")
+        yield Label(f"[dim]Model:[/dim] {escape(self.cfg.model_name[:22])}", classes="info-row")
+        yield Label(f"[dim]CWD:[/dim]   {escape(self.cfg.cwd[:22])}", classes="info-row")
         yield Label("", id="status-badge")
         yield Label("", id="iter-label", classes="info-row")
 
